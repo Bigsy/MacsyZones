@@ -23,7 +23,7 @@ class VerifyResult {
 }
 
 class ProLock: ObservableObject {
-    @Published var isPro: Bool = false
+    @Published var isPro: Bool = true
     @Published var owner: String?
     
     private var licenseKey: String = ""
