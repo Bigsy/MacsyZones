@@ -25,7 +25,8 @@ https://github.com/user-attachments/assets/101d3296-889f-4cfb-93cf-87bad548a108
 You can install MacsyZones via [Homebrew](https://brew.sh):
 
 ```sh
-brew install --cask macsyzones
+brew install --cask Bigsy/tap/bigsy-macsyzones
+xattr -cr /Applications/MacsyZones.app
 ```
 
 ## Buy to support me
