@@ -1798,7 +1798,7 @@ class SnapResizer: NSWindow {
         draggedOnce = true
         
         guard let focusedScreen = getFocusedScreen() else { return }
-        let focusedScreenNumber = NSScreen.screens.firstIndex(of: focusedScreen)
+        let focusedScreenID = focusedScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32
         
         resizerX += event.deltaX
         resizerY -= event.deltaY
@@ -1854,11 +1854,12 @@ class SnapResizer: NSWindow {
                     if sectionWindow.number != sectionNumber { continue }
                     if PlacedWindows.layouts[windowId] != relatedSection.sectionWindow.layoutWindow.name { continue }
                     
-                    guard let screenNumber = PlacedWindows.screens[windowId] else { continue }
-                    if NSScreen.screens.count <= screenNumber { continue }
-                    
-                    if focusedScreenNumber != screenNumber {
-                        let screen = NSScreen.screens[screenNumber]
+                    guard let screenID = PlacedWindows.screens[windowId] else { continue }
+
+                    if focusedScreenID != screenID {
+                        guard let screen = NSScreen.screens.first(where: {
+                            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32) == screenID
+                        }) else { continue }
                         let sectionConfig = sectionWindow.sectionConfig.getUpdated(for: sectionWindow.window,
                                                                                    on: focusedScreen)
                         

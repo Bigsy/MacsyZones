@@ -1012,9 +1012,9 @@ private func handleZoneMouseUp() {
 
             moveWindowToMatch(element: window, targetWindow: sectionWindow.window)
 
-            if let (screenNumber, workspaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() {
+            if let (screenID, workspaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() {
                 PlacedWindows.place(windowId: windowId,
-                                    screenNumber: screenNumber,
+                                    screenID: screenID,
                                     workspaceNumber: workspaceNumber,
                                     layoutName: userLayouts.currentLayoutName,
                                     sectionNumber: toLeaveSectionWindow!.number,
@@ -1073,9 +1073,9 @@ private func handleGridMouseUp() {
             retries: 10
         )
 
-        if let (screenNumber, workspaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() {
+        if let (screenID, workspaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() {
             PlacedWindows.place(windowId: windowId,
-                                screenNumber: screenNumber,
+                                screenID: screenID,
                                 workspaceNumber: workspaceNumber,
                                 layoutName: userLayouts.currentLayoutName,
                                 sectionNumber: -1,

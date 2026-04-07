@@ -14,7 +14,7 @@ import Foundation
 import Cocoa
 
 struct ScreenSpacePair: Hashable, Codable {
-    let screen: Int
+    let screen: UInt32
     let space: Int
 }
 
@@ -26,13 +26,13 @@ class SpaceLayoutPreferences: UserData {
         super.init(name: name, data: data, fileName: fileName)
     }
 
-    func set(screenNumber: Int, spaceNumber: Int, layoutName: String) {
-        spaces[ScreenSpacePair(screen: screenNumber, space: spaceNumber)] = layoutName
+    func set(screenID: UInt32, spaceNumber: Int, layoutName: String) {
+        spaces[ScreenSpacePair(screen: screenID, space: spaceNumber)] = layoutName
         save()
     }
 
-    func get(screenNumber: Int, spaceNumber: Int) -> String? {
-        let name = spaces[ScreenSpacePair(screen: screenNumber, space: spaceNumber)]
+    func get(screenID: UInt32, spaceNumber: Int) -> String? {
+        let name = spaces[ScreenSpacePair(screen: screenID, space: spaceNumber)]
         
         if name == nil {
             return nil
@@ -46,53 +46,81 @@ class SpaceLayoutPreferences: UserData {
     }
 
     func setCurrent(layoutName: String) {
-        guard let (screenNumber, spaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else {
+        guard let (screenID, spaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else {
             debugLog("Unable to get the current screen and space")
             return
         }
 
-        set(screenNumber: screenNumber, spaceNumber: spaceNumber, layoutName: layoutName)
+        set(screenID: screenID, spaceNumber: spaceNumber, layoutName: layoutName)
     }
 
     func getCurrent() -> String? {
-        guard let (screenNumber, spaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else {
+        guard let (screenID, spaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else {
             debugLog("Unable to get the current screen and space")
             return nil
         }
 
-        return get(screenNumber: screenNumber, spaceNumber: spaceNumber)
+        return get(screenID: screenID, spaceNumber: spaceNumber)
     }
 
-    static func getCurrentScreenAndSpace() -> (Int, Int)? {
+    static func getCurrentScreenAndSpace() -> (UInt32, Int)? {
         guard let focusedScreen = getFocusedScreen(),
-              let screenIndex = NSScreen.screens.firstIndex(of: focusedScreen) else {
+              let screenID = focusedScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else {
             return nil
         }
 
-        guard let spaceNumber = getCurrentSpaceNumber() else {
+        guard let spaceNumber = getCurrentSpaceNumber(for: focusedScreen) else {
             return nil
         }
 
-        return (screenIndex, spaceNumber)
+        return (screenID, spaceNumber)
     }
 
-    static func getCurrentSpaceNumber() -> Int? {
+    static func getCurrentSpaceNumber(for screen: NSScreen) -> Int? {
         let connection = CGSMainConnectionID()
 
-        if let unmanagedDisplaySpaces = CGSCopyManagedDisplaySpaces(connection) {
-            if let displaySpaces = unmanagedDisplaySpaces.takeRetainedValue() as? [[String: Any]],
-               let currentSpaceDict = displaySpaces.first,
-               let currentSpace = currentSpaceDict["Current Space"] as? NSDictionary,
-               let activeSpaceID = currentSpace["ManagedSpaceID"] as? Int {
-                   return activeSpaceID
-               }
+        guard let unmanagedDisplaySpaces = CGSCopyManagedDisplaySpaces(connection),
+              let displaySpaces = unmanagedDisplaySpaces.takeRetainedValue() as? [[String: Any]] else {
+            return nil
         }
+
+        // Get the display UUID for the target screen
+        guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
+            return nil
+        }
+        let uuid = CGDisplayCreateUUIDFromDisplayID(displayID).takeRetainedValue()
+        let uuidString = CFUUIDCreateString(nil, uuid) as String
+
+        // Find the matching display entry
+        for displaySpace in displaySpaces {
+            guard let displayIdentifier = displaySpace["Display Identifier"] as? String else { continue }
+            if displayIdentifier == uuidString,
+               let currentSpace = displaySpace["Current Space"] as? NSDictionary,
+               let activeSpaceID = currentSpace["ManagedSpaceID"] as? Int {
+                return activeSpaceID
+            }
+        }
+
+        // Fallback: if no match found (e.g. "Displays have separate Spaces" is off),
+        // try the first entry
+        if let firstEntry = displaySpaces.first,
+           let currentSpace = firstEntry["Current Space"] as? NSDictionary,
+           let activeSpaceID = currentSpace["ManagedSpaceID"] as? Int {
+            return activeSpaceID
+        }
+
         return nil
+    }
+
+    private struct VersionedPreferences: Codable {
+        var version: Int = 1
+        var spaces: [ScreenSpacePair: String]
     }
 
     override func save() {
         do {
-            let jsonData = try JSONEncoder().encode(spaces)
+            let versioned = VersionedPreferences(version: 1, spaces: spaces)
+            let jsonData = try JSONEncoder().encode(versioned)
             let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
             data = jsonString
             super.save()
@@ -103,26 +131,54 @@ class SpaceLayoutPreferences: UserData {
 
     override func load() {
         super.load()
-        do {
-            if let jsonData = data.data(using: .utf8) {
-                spaces = try JSONDecoder().decode([ScreenSpacePair: String].self, from: jsonData)
-                debugLog("Preferences loaded successfully.")
-            }
-        } catch {
-            debugLog("Error loading SpaceLayoutPreferences: \(error)")
+
+        guard let jsonData = data.data(using: .utf8) else { return }
+
+        // Try new versioned format first
+        if let versioned = try? JSONDecoder().decode(VersionedPreferences.self, from: jsonData),
+           versioned.version >= 1 {
+            spaces = versioned.spaces
+            debugLog("Preferences loaded successfully (v\(versioned.version)).")
+            return
         }
+
+        // Old format (no version field, screen was an array index) — clear and re-save as v1
+        debugLog("Legacy SpaceLayoutPreferences detected (index-based screens). Clearing and migrating to v1 with display IDs.")
+        spaces = [:]
+        save()
     }
     
+    private var screenChangeWorkItem: DispatchWorkItem?
+    private var isWakingFromSleep = false
+
     func switchToCurrent() {
         if let layoutName = self.getCurrent() {
             userLayouts.currentLayoutName = layoutName
-            
+
             for (_, layout) in userLayouts.layouts {
                 layout.hideAllWindows()
             }
         }
     }
-    
+
+    private func scheduleScreenRefresh() {
+        screenChangeWorkItem?.cancel()
+
+        let delay: Double = isWakingFromSleep ? 3.0 : 0.5
+        screenChangeWorkItem = DispatchWorkItem { [weak self] in
+            self?.isWakingFromSleep = false
+
+            if #available(macOS 12.0, *) { quickSnapper.close() }
+            guard appSettings.selectPerDesktopLayout else { return }
+            self?.switchToCurrent()
+        }
+
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + delay,
+            execute: screenChangeWorkItem!
+        )
+    }
+
     func startObserving() {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
@@ -133,28 +189,29 @@ class SpaceLayoutPreferences: UserData {
                 isFitting = false
                 userLayouts.hideAllSectionWindows()
                 if #available(macOS 12.0, *) { quickSnapper.close() }
-                
+
                 if !appSettings.selectPerDesktopLayout { return }
-                
+
                 self.switchToCurrent()
             }
         )
-        
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: nil,
+            using: { _ in
+                self.isWakingFromSleep = true
+                self.scheduleScreenRefresh()
+            }
+        )
+
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: nil,
             using: { _ in
-                if #available(macOS 12.0, *) { quickSnapper.close() }
-                if !appSettings.selectPerDesktopLayout { return }
-                
-                if let layoutName = self.getCurrent() {
-                    userLayouts.currentLayoutName = layoutName
-                    
-                    for (_, layout) in userLayouts.layouts {
-                        layout.hideAllWindows()
-                    }
-                }
+                self.scheduleScreenRefresh()
             }
         )
     }
