@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            LATEST=$(git tag --list 'v*' --sort=-v:refname | head -1)
+            LATEST="${LATEST#v}"
+            if [ -z "$LATEST" ]; then
+              LATEST="0.0.0"
+            fi
+
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
+            case "${{ inputs.bump }}" in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH + 1)) ;;
+            esac
+
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            TAG="v${VERSION}"
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG"
+            git push origin "$TAG"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        run: gh release create "${{ steps.version.outputs.tag }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build app
+        run: |
+          xcodebuild \
+            -project MacsyZones.xcodeproj \
+            -scheme MacsyZones \
+            -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet
+
+      - name: Zip app
+        run: ditto -c -k --keepParent build/Build/Products/Release/MacsyZones.app MacsyZones.zip
+
+      - name: Upload zip to release
+        run: gh release upload "${{ steps.version.outputs.tag }}" MacsyZones.zip --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Homebrew tap
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA256=$(shasum -a 256 MacsyZones.zip | awk '{print $1}')
+
+          git clone https://x-access-token:${TAP_TOKEN}@github.com/Bigsy/homebrew-tap.git tap
+          cd tap
+
+          mkdir -p Casks
+
+          cat > Casks/bigsy-macsyzones.rb <<EOF
+          cask "bigsy-macsyzones" do
+            version "${VERSION}"
+            sha256 "${SHA256}"
+
+            url "https://github.com/Bigsy/MacsyZones/releases/download/v${VERSION}/MacsyZones.zip"
+            name "MacsyZones"
+            desc "macOS window management with zone snapping"
+            homepage "https://github.com/Bigsy/MacsyZones"
+
+            depends_on macos: ">= :big_sur"
+
+            app "MacsyZones.app"
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/bigsy-macsyzones.rb
+          git commit -m "update bigsy-macsyzones cask to ${VERSION}"
+          git push
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
