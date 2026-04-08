@@ -41,7 +41,7 @@ func quickSnap(sectionNumber: Int, element: AXUIElement, windowId: UInt32) {
     let section = userLayouts.currentLayout.layoutWindow.sectionWindows.first(where: { $0.sectionConfig.number! == sectionNumber })
     
     if let section, let sectionWindow = section.window {
-        guard let (screenID, workspaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else { return }
+        guard let (screenUUID, workspaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else { return }
 
         if !PlacedWindows.isPlaced(windowId: windowId) {
             OriginalWindowProperties.update(windowID: windowId)
@@ -49,7 +49,7 @@ func quickSnap(sectionNumber: Int, element: AXUIElement, windowId: UInt32) {
 
         moveWindowToMatch(element: element, targetWindow: sectionWindow)
         PlacedWindows.place(windowId: windowId,
-                            screenID: screenID,
+                            screenUUID: screenUUID,
                             workspaceNumber: workspaceNumber,
                             layoutName: userLayouts.currentLayoutName,
                             sectionNumber: sectionNumber,

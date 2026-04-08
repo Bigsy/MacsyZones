@@ -14,8 +14,16 @@ import Foundation
 import Cocoa
 
 struct ScreenSpacePair: Hashable, Codable {
-    let screen: UInt32
+    let screen: String
     let space: Int
+}
+
+func getDisplayUUID(for screen: NSScreen) -> String? {
+    guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID,
+          let uuid = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue() else {
+        return nil
+    }
+    return CFUUIDCreateString(nil, uuid) as String
 }
 
 class SpaceLayoutPreferences: UserData {
@@ -26,46 +34,46 @@ class SpaceLayoutPreferences: UserData {
         super.init(name: name, data: data, fileName: fileName)
     }
 
-    func set(screenID: UInt32, spaceNumber: Int, layoutName: String) {
-        spaces[ScreenSpacePair(screen: screenID, space: spaceNumber)] = layoutName
+    func set(screenUUID: String, spaceNumber: Int, layoutName: String) {
+        spaces[ScreenSpacePair(screen: screenUUID, space: spaceNumber)] = layoutName
         save()
     }
 
-    func get(screenID: UInt32, spaceNumber: Int) -> String? {
-        let name = spaces[ScreenSpacePair(screen: screenID, space: spaceNumber)]
-        
+    func get(screenUUID: String, spaceNumber: Int) -> String? {
+        let name = spaces[ScreenSpacePair(screen: screenUUID, space: spaceNumber)]
+
         if name == nil {
             return nil
         }
-        
+
         if !userLayouts.layouts.keys.contains(name!) {
             return userLayouts.layouts.values.first?.name
         }
-        
+
         return name
     }
 
     func setCurrent(layoutName: String) {
-        guard let (screenID, spaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else {
+        guard let (screenUUID, spaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else {
             debugLog("Unable to get the current screen and space")
             return
         }
 
-        set(screenID: screenID, spaceNumber: spaceNumber, layoutName: layoutName)
+        set(screenUUID: screenUUID, spaceNumber: spaceNumber, layoutName: layoutName)
     }
 
     func getCurrent() -> String? {
-        guard let (screenID, spaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else {
+        guard let (screenUUID, spaceNumber) = SpaceLayoutPreferences.getCurrentScreenAndSpace() else {
             debugLog("Unable to get the current screen and space")
             return nil
         }
 
-        return get(screenID: screenID, spaceNumber: spaceNumber)
+        return get(screenUUID: screenUUID, spaceNumber: spaceNumber)
     }
 
-    static func getCurrentScreenAndSpace() -> (UInt32, Int)? {
+    static func getCurrentScreenAndSpace() -> (String, Int)? {
         guard let focusedScreen = getFocusedScreen(),
-              let screenID = focusedScreen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32 else {
+              let screenUUID = getDisplayUUID(for: focusedScreen) else {
             return nil
         }
 
@@ -73,7 +81,7 @@ class SpaceLayoutPreferences: UserData {
             return nil
         }
 
-        return (screenID, spaceNumber)
+        return (screenUUID, spaceNumber)
     }
 
     static func getCurrentSpaceNumber(for screen: NSScreen) -> Int? {
@@ -84,17 +92,14 @@ class SpaceLayoutPreferences: UserData {
             return nil
         }
 
-        // Get the display UUID for the target screen
-        guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID else {
+        guard let screenUUID = getDisplayUUID(for: screen) else {
             return nil
         }
-        let uuid = CGDisplayCreateUUIDFromDisplayID(displayID).takeRetainedValue()
-        let uuidString = CFUUIDCreateString(nil, uuid) as String
 
         // Find the matching display entry
         for displaySpace in displaySpaces {
             guard let displayIdentifier = displaySpace["Display Identifier"] as? String else { continue }
-            if displayIdentifier == uuidString,
+            if displayIdentifier == screenUUID,
                let currentSpace = displaySpace["Current Space"] as? NSDictionary,
                let activeSpaceID = currentSpace["ManagedSpaceID"] as? Int {
                 return activeSpaceID
@@ -113,13 +118,13 @@ class SpaceLayoutPreferences: UserData {
     }
 
     private struct VersionedPreferences: Codable {
-        var version: Int = 1
+        var version: Int = 2
         var spaces: [ScreenSpacePair: String]
     }
 
     override func save() {
         do {
-            let versioned = VersionedPreferences(version: 1, spaces: spaces)
+            let versioned = VersionedPreferences(version: 2, spaces: spaces)
             let jsonData = try JSONEncoder().encode(versioned)
             let jsonString = String(data: jsonData, encoding: .utf8) ?? "{}"
             data = jsonString
@@ -134,16 +139,16 @@ class SpaceLayoutPreferences: UserData {
 
         guard let jsonData = data.data(using: .utf8) else { return }
 
-        // Try new versioned format first
+        // Try current versioned format (v2: screen is a UUID string)
         if let versioned = try? JSONDecoder().decode(VersionedPreferences.self, from: jsonData),
-           versioned.version >= 1 {
+           versioned.version >= 2 {
             spaces = versioned.spaces
             debugLog("Preferences loaded successfully (v\(versioned.version)).")
             return
         }
 
-        // Old format (no version field, screen was an array index) — clear and re-save as v1
-        debugLog("Legacy SpaceLayoutPreferences detected (index-based screens). Clearing and migrating to v1 with display IDs.")
+        // Old format (v0: no version + index-based, or v1: UInt32 display ID) — clear and re-save
+        debugLog("Legacy SpaceLayoutPreferences detected. Clearing and migrating to v2 with display UUIDs.")
         spaces = [:]
         save()
     }

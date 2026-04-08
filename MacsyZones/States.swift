@@ -54,13 +54,13 @@ class PlacedWindows {
     static var elements: [UInt32: AXUIElement] = [:]
     static var layouts: [UInt32: String] = [:]
     static var workspaces: [UInt32: Int] = [:]
-    static var screens: [UInt32: UInt32] = [:]
+    static var screens: [UInt32: String] = [:]
 
-    static func place(windowId: UInt32, screenID: UInt32, workspaceNumber: Int, layoutName: String, sectionNumber: Int, element: AXUIElement) {
+    static func place(windowId: UInt32, screenUUID: String, workspaceNumber: Int, layoutName: String, sectionNumber: Int, element: AXUIElement) {
         windows[windowId] = sectionNumber
         elements[windowId] = element
         layouts[windowId] = layoutName
-        screens[windowId] = screenID
+        screens[windowId] = screenUUID
         workspaces[windowId] = workspaceNumber
         
         donationReminder.count()
