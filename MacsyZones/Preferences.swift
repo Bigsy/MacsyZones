@@ -40,17 +40,24 @@ class SpaceLayoutPreferences: UserData {
     }
 
     func get(screenUUID: String, spaceNumber: Int) -> String? {
-        let name = spaces[ScreenSpacePair(screen: screenUUID, space: spaceNumber)]
-
-        if name == nil {
-            return nil
+        // Exact match by screen UUID + space number
+        if let name = spaces[ScreenSpacePair(screen: screenUUID, space: spaceNumber)] {
+            if !userLayouts.layouts.keys.contains(name) {
+                return userLayouts.layouts.values.first?.name
+            }
+            return name
         }
 
-        if !userLayouts.layouts.keys.contains(name!) {
-            return userLayouts.layouts.values.first?.name
+        // Fallback: match by screen UUID only (handles space number changes after reboot/sleep)
+        for (pair, layoutName) in spaces where pair.screen == screenUUID {
+            debugLog("Space number mismatch for screen \(screenUUID): saved=\(pair.space), current=\(spaceNumber). Using saved layout '\(layoutName)'.")
+            if !userLayouts.layouts.keys.contains(layoutName) {
+                return userLayouts.layouts.values.first?.name
+            }
+            return layoutName
         }
 
-        return name
+        return nil
     }
 
     func setCurrent(layoutName: String) {
@@ -166,6 +173,27 @@ class SpaceLayoutPreferences: UserData {
         }
     }
 
+    func ensureAllScreensHaveEntries() {
+        var didChange = false
+        for screen in NSScreen.screens {
+            guard let uuid = getDisplayUUID(for: screen),
+                  let spaceNumber = SpaceLayoutPreferences.getCurrentSpaceNumber(for: screen) else {
+                continue
+            }
+
+            let hasEntry = spaces.contains { $0.key.screen == uuid }
+            if !hasEntry {
+                let defaultLayout = userLayouts.currentLayoutName
+                debugLog("No profile for screen \(uuid), initializing with '\(defaultLayout)'")
+                spaces[ScreenSpacePair(screen: uuid, space: spaceNumber)] = defaultLayout
+                didChange = true
+            }
+        }
+        if didChange {
+            save()
+        }
+    }
+
     private func scheduleScreenRefresh() {
         screenChangeWorkItem?.cancel()
 
@@ -175,6 +203,7 @@ class SpaceLayoutPreferences: UserData {
 
             if #available(macOS 12.0, *) { quickSnapper.close() }
             guard appSettings.selectPerDesktopLayout else { return }
+            self?.ensureAllScreensHaveEntries()
             self?.switchToCurrent()
         }
 
@@ -185,6 +214,10 @@ class SpaceLayoutPreferences: UserData {
     }
 
     func startObserving() {
+        if appSettings.selectPerDesktopLayout {
+            ensureAllScreensHaveEntries()
+        }
+
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil,

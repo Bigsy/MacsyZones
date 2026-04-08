@@ -278,6 +278,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, Sen
         if #available(macOS 12.0, *) {
             quickSnapper.close()
         }
+        // Refresh the picker to show the correct layout for whichever screen this popover is on
+        if appSettings.selectPerDesktopLayout,
+           let layoutName = spaceLayoutPreferences.getCurrent() {
+            userLayouts.currentLayoutName = layoutName
+        }
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
     }
     

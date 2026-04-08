@@ -56,6 +56,24 @@ Preferably, donating USDT or USDC is recommended but you can donate any of the a
 
 You can join [MacsyZones Discord server](https://discord.gg/C4axTA6rpn).
 
+## Building from Source
+
+Open `MacsyZones.xcodeproj` in Xcode and build.
+
+### Code Signing (optional)
+
+The project ships with ad-hoc signing so it builds without a developer account. If you want a stable code signature (avoids re-granting Accessibility permission after every build), copy the example config and fill in your team ID:
+
+```sh
+cp Local.xcconfig.example Local.xcconfig
+```
+
+Edit `Local.xcconfig` and replace `YOUR_TEAM_ID_HERE` with your Apple Development Team ID (found in [Apple Developer → Account → Membership Details](https://developer.apple.com/account)). A free Apple ID works — no paid membership required.
+
+Then in Xcode, select your Personal Team under **Signing & Capabilities** for the MacsyZones target.
+
+`Local.xcconfig` is gitignored and won't be committed.
+
 ## Contributing
 
 We welcome contributions to MacsyZones. Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file for more information.
