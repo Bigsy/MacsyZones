@@ -107,6 +107,11 @@ jobs:
             depends_on macos: ">= :big_sur"
 
             app "MacsyZones.app"
+
+            postflight do
+              system_command "/usr/bin/xattr", args: ["-cr", "#{appdir}/MacsyZones.app"]
+              system_command "/usr/bin/tccutil", args: ["reset", "Accessibility", "MeowingCat.MacsyZones"]
+            end
           end
           EOF
 
