@@ -161,7 +161,12 @@ class SpaceLayoutPreferences: UserData {
     }
     
     private var screenChangeWorkItem: DispatchWorkItem?
+    private var wakeCooldownWorkItem: DispatchWorkItem?
     private var isWakingFromSleep = false
+
+    private static let wakeRefreshDelay: TimeInterval = 6.0
+    private static let normalRefreshDelay: TimeInterval = 0.5
+    private static let wakeCooldownDuration: TimeInterval = 15.0
 
     func switchToCurrent() {
         if let layoutName = self.getCurrent() {
@@ -197,10 +202,13 @@ class SpaceLayoutPreferences: UserData {
     private func scheduleScreenRefresh() {
         screenChangeWorkItem?.cancel()
 
-        let delay: Double = isWakingFromSleep ? 3.0 : 0.5
-        screenChangeWorkItem = DispatchWorkItem { [weak self] in
-            self?.isWakingFromSleep = false
+        let delay: Double = isWakingFromSleep ? Self.wakeRefreshDelay : Self.normalRefreshDelay
 
+        if isWakingFromSleep {
+            extendWakeCooldown()
+        }
+
+        screenChangeWorkItem = DispatchWorkItem { [weak self] in
             if #available(macOS 12.0, *) { quickSnapper.close() }
             guard appSettings.selectPerDesktopLayout else { return }
             self?.ensureAllScreensHaveEntries()
@@ -213,10 +221,46 @@ class SpaceLayoutPreferences: UserData {
         )
     }
 
+    private func extendWakeCooldown() {
+        wakeCooldownWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.isWakingFromSleep = false
+            debugLog("Wake cooldown ended; normal refresh cadence resumed")
+        }
+        wakeCooldownWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.wakeCooldownDuration,
+            execute: workItem
+        )
+    }
+
+    fileprivate func handleDisplayReconfiguration(display: CGDirectDisplayID, flags: CGDisplayChangeSummaryFlags) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if flags.contains(.beginConfigurationFlag) {
+                debugLog("Display \(display) begin reconfiguration")
+                self.screenChangeWorkItem?.cancel()
+                if self.isWakingFromSleep {
+                    self.extendWakeCooldown()
+                }
+            } else {
+                debugLog("Display \(display) reconfigured (flags=\(flags.rawValue))")
+                self.scheduleScreenRefresh()
+            }
+        }
+    }
+
     func startObserving() {
         if appSettings.selectPerDesktopLayout {
             ensureAllScreensHaveEntries()
         }
+
+        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        _ = CGDisplayRegisterReconfigurationCallback({ display, flags, userInfo in
+            guard let userInfo else { return }
+            let prefs = Unmanaged<SpaceLayoutPreferences>.fromOpaque(userInfo).takeUnretainedValue()
+            prefs.handleDisplayReconfiguration(display: display, flags: flags)
+        }, context)
 
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
@@ -240,6 +284,7 @@ class SpaceLayoutPreferences: UserData {
             queue: nil,
             using: { _ in
                 self.isWakingFromSleep = true
+                self.extendWakeCooldown()
                 self.scheduleScreenRefresh()
             }
         )
