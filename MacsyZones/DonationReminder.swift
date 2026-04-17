@@ -42,23 +42,7 @@ struct DonationReminderView: View {
                     .lineSpacing(5)
                 
                 Spacer()
-                
-                Button(action: {
-                    NSWorkspace.shared.open(donationURL)
-                }) {
-                    HStack {
-                        Image(systemName: "heart.fill")
-                            .foregroundColor(.red)
-                        Text("Unlock Pro Version")
-                            .fontWeight(.bold)
-                    }
-                }.padding()
-                 .frame(maxWidth: .infinity)
-                 .background(Color.pink.opacity(0.2))
-                 .cornerRadius(26)
-                
-                Spacer()
-                
+
                 Text("You can also visit the GitHub repository to contribute or report issues and find other ways to donate! 🤗")
                     .font(.system(size: 13))
                     .lineSpacing(4)
